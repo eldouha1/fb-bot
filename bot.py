@@ -21,21 +21,8 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-# دالة ذكية لاختيار النموذج المتاح تلقائياً لتجنب خطأ 404 نهائياً
-def get_working_model():
-    try:
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                if 'flash' in m.name.lower():
-                    return genai.GenerativeModel(m.name)
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                return genai.GenerativeModel(m.name)
-    except Exception:
-        pass
-    return genai.GenerativeModel("gemini-1.5-flash")
-
-model = get_working_model()
+# استخدام النموذج الأحدث المعتمد من جوجل
+model = genai.GenerativeModel("gemini-3.8-flash")
 
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
@@ -52,7 +39,6 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             prompt = f"أنت خبير علمي وأكاديمي. قم بتحليل محتوى الفيديو التالي المستخرج من فيسبوك ووضح بدقة إن كان دقيقاً علمياً أم لا باختصار:\n\n{video_content}"
             
-            global model
             response = model.generate_content(prompt)
             await status_msg.edit_text(f"🔬 **التقييم العلمي من جيميني:**\n\n{response.text}")
             
