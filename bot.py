@@ -1,7 +1,7 @@
 import os
+import asyncio
 import subprocess
 import threading
-import time
 from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
@@ -11,7 +11,7 @@ import google.generativeai as genai
 app_web = Flask(__name__)
 @app_web.route('/')
 def home():
-    return "Scientific Fact-Checker Bot is Running!"
+    return "Scientific Video Fact-Checker is Active!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -24,97 +24,109 @@ genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-3.8-flash")
 
 PROMPT_TEMPLATE = """
-أنت خبير وأكاديمي متخصص في التدقيق العلمي للادعاءات والمعلومات المنشورة على وسائل التواصل الاجتماعي:
-1. استخرج الادعاءات الرئيسية الواردة في هذا المحتوى.
-2. قيّم صحة ودقة هذه الادعاءات علمياً وأكاديمياً (صحيح، مضلل، غير دقيق، مغالطة).
-3. قدّم التفسير العلمي الموثق والبديل الصحيح باختصار ودقة.
+أنت خبير وأكاديمي متخصص في التدقيق العلمي والمنهجي:
+1. استخرج الادعاءات أو الفرضيات الأساسية المطروحة في هذا المحتوى بدقة.
+2. قيّم مدى صحتها ومطابقتها للحقائق والأدلة العلمية المعتمدة (صحيح، مضلل، غير مثبت، مغالطة).
+3. قدّم التفسير العلمي الموثق والبديل الصحيح باختصار منهجي واضح ومباشر.
 """
 
-# معالجة الروابط النصية
+# استخراج بيانات الرابط في خيط منفصل لتفادي تجميد البوت
+def fetch_link_metadata(url: str):
+    cmd = [
+        "yt-dlp",
+        "--no-playlist",
+        "--socket-timeout", "5",
+        "--print", "%(title)s\n\n%(description)s",
+        url
+    ]
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=12)
+
+# تحليل المحتوى بواسطة جيميني في خيط منفصل
+def analyze_with_gemini(contents):
+    return model.generate_content(contents)
+
+# معالجة الروابط والنصوص
 async def handle_text_or_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     
-    # فحص ما إذا كانت الرسالة تحتوي على رابط
     if "http://" in text or "https://" in text:
-        status_msg = await update.message.reply_text("⏳ جاري محاولة سحب بيانات الفيديو من الرابط...")
+        status_msg = await update.message.reply_text("⏳ جاري فحص الرابط ومحاولة استخراج المحتوى...")
         try:
-            cmd = [
-                "yt-dlp",
-                "--no-playlist",
-                "--print", "%(title)s\n\n%(description)s",
-                text
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+            # تشغيل الجلب في Thread مستقل لمنع تجميد حلقة الأحداث
+            result = await asyncio.to_thread(fetch_link_metadata, text)
             
-            if result.returncode != 0:
-                # إذا حظر فيسبوك عنوان السيرفر السحابي
+            if result.returncode != 0 or not result.stdout.strip():
                 await status_msg.edit_text(
-                    "⚠️ **تعذر استخراج بيانات الفيديو من الرابط:**\n"
-                    "تفرض خوارزميات فيسبوك جدار حماية ضد الخوادم السحابية.\n\n"
-                    "💡 **لتدقيق هذا الفيديو بأداتك:** أرسل ملف الفيديو أو قم بإعادة توجيهه (Forward) إلى البوت مباشرة ليحلله محرك Gemini صوتاً وصورة."
+                    "⚠️ **حظر من المصدر (Facebook Cloud Block):**\n"
+                    "تمنع منصة فيسبوك خوادم السحابة من الوصول المباشر للروابط.\n\n"
+                    "🎯 **لفحص هذا الفيديو بأداتك الآن:**\n"
+                    "قم بتحميل مقطع الفيديو على هاتفك وأرسله مباشرة إلى البوت كملف فيديو، وسيقوم النموذج بفحصه وتدقيقه صوتياً وبصرياً بالكامل."
                 )
                 return
 
-            extracted_content = result.stdout.strip()
-            if not extracted_content:
-                await status_msg.edit_text("❌ لم يتم العثور على عنوان أو وصف متاح في هذا الرابط.")
-                return
-
-            await status_msg.edit_text("🔬 جاري فحص المحتوى المستخرج وتدقيقه علمياً...")
-            full_prompt = f"{PROMPT_TEMPLATE}\n\nالمحتوى المستخرج من الفيديو:\n{extracted_content}"
-            response = model.generate_content(full_prompt)
-            await status_msg.edit_text(f"🔬 **التقرير العلمي:**\n\n{response.text}")
+            await status_msg.edit_text("🔬 تم سحب البيانات، جاري التحليل والتدقيق العلمي...")
+            full_prompt = f"{PROMPT_TEMPLATE}\n\nالمحتوى المستخرج:\n{result.stdout.strip()}"
+            response = await asyncio.to_thread(analyze_with_gemini, full_prompt)
+            
+            output = f"🔬 **التقرير والتدقيق العلمي:**\n\n{response.text}"
+            await status_msg.edit_text(output[:4000])
 
         except subprocess.TimeoutExpired:
-            await status_msg.edit_text("⏱️ انتهت مهلة محاولة الاتصال بالرابط.")
+            await status_msg.edit_text(
+                "⏱️ **انتهت مهلة الاتصال بالرابط:**\n"
+                "خادم فيسبوك لم يستجب. أرسل ملف الفيديو مباشرة ليتم تحليله داخلياً."
+            )
         except Exception as e:
-            await status_msg.edit_text(f"❌ خطأ تقني: {str(e)}")
+            await status_msg.edit_text(f"❌ حدث خطأ: {str(e)}")
     else:
-        # تحليل نص أو ادعاء مكتوب مباشرة
-        status_msg = await update.message.reply_text("🔬 جاري فحص وتدقيق النص علمياً...")
+        # فحص نص أو ادعاء مكتوب
+        status_msg = await update.message.reply_text("🔬 جاري التدقيق العلمي للنص...")
         try:
-            full_prompt = f"{PROMPT_TEMPLATE}\n\nالنص المرسل:\n{text}"
-            response = model.generate_content(full_prompt)
-            await status_msg.edit_text(f"🔬 **التقرير العلمي:**\n\n{response.text}")
+            full_prompt = f"{PROMPT_TEMPLATE}\n\nالادعاء:\n{text}"
+            response = await asyncio.to_thread(analyze_with_gemini, full_prompt)
+            output = f"🔬 **التقرير العلمي:**\n\n{response.text}"
+            await status_msg.edit_text(output[:4000])
         except Exception as e:
             await status_msg.edit_text(f"❌ خطأ أثناء التحليل: {str(e)}")
 
-# معالجة ملفات الفيديو المباشرة
+# معالجة ملفات الفيديو المباشرة (صوت وصورة)
 async def handle_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video = update.message.video or update.message.document
-    status_msg = await update.message.reply_text("📥 تم استلام الفيديو، جاري نقله وتحليله عبر محرك Gemini...")
+    status_msg = await update.message.reply_text("📥 تم استلام الفيديو، جاري رفعه لمحرك Gemini للتحليل البصري والصوتي...")
     video_path = f"temp_{update.message.chat_id}.mp4"
     
     try:
         file = await context.bot.get_file(video.file_id)
         await file.download_to_drive(video_path)
         
-        # رفع الفيديو لواجهة Gemini المتعددة الوسائط
-        gemini_file = genai.upload_file(video_path)
+        # رفع الفيديو لـ Gemini File API
+        gemini_file = await asyncio.to_thread(genai.upload_file, video_path)
+        
         while gemini_file.state.name == "PROCESSING":
-            time.sleep(2)
-            gemini_file = genai.get_file(gemini_file.name)
+            await asyncio.sleep(2)
+            gemini_file = await asyncio.to_thread(genai.get_file, gemini_file.name)
 
         if gemini_file.state.name == "FAILED":
-            raise ValueError("فشلت معالجة ملف الفيديو على خوادم الذكاء الاصطناعي.")
+            raise ValueError("فشلت خوادم الذكاء الاصطناعي في معالجة إطارات الفيديو.")
 
-        response = model.generate_content([gemini_file, PROMPT_TEMPLATE])
-        await status_msg.edit_text(f"🔬 **التقرير العلمي الشامل للفيديو:**\n\n{response.text}")
-        genai.delete_file(gemini_file.name)
+        response = await asyncio.to_thread(analyze_with_gemini, [gemini_file, PROMPT_TEMPLATE])
+        
+        output = f"🔬 **التقرير العلمي الشامل لمحتوى الفيديو:**\n\n{response.text}"
+        await status_msg.edit_text(output[:4000])
+        
+        await asyncio.to_thread(genai.delete_file, gemini_file.name)
 
     except Exception as e:
-        await status_msg.edit_text(f"❌ حدث خطأ أثناء معالجة الفيديو: {str(e)}")
+        await status_msg.edit_text(f"❌ خطأ أثناء معالجة الفيديو: {str(e)}")
     finally:
         if os.path.exists(video_path):
             os.remove(video_path)
 
 def main():
-    threading.Thread(target=run_web).start()
+    threading.Thread(target=run_web, daemon=True).start()
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     
-    # دعم النصوص والروابط
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text_or_link))
-    # دعم الفيديوهات المباشرة
     app.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO | filters.ANIMATION, handle_video_file))
     
     app.run_polling()
