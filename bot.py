@@ -6,7 +6,7 @@ from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filte
 import google.generativeai as genai
 import threading
 
-# خادم ويب لإبقاء البوت مستيقظاً على Render 24/7
+# خادم ويب لإبقاء البوت مستيقظاً على Render 24/7..1
 app_web = Flask(__name__)
 @app_web.route('/')
 def home():
