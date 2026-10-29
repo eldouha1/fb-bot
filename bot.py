@@ -25,15 +25,20 @@ model = genai.GenerativeModel("gemini-3.8-flash")
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
     if "facebook.com" in url or "fb.watch" in url:
-        status_msg = await update.message.reply_text("⏳ جاري سحب بيانات الفيديو وتحليله علمياً عبر السحابة...")
+        status_msg = await update.message.reply_text("⏳ جاري محاولة سحب بيانات الفيديو عبر محاكي السحابة...")
         try:
-            # إضافة وقت محدد (timeout=20 ثانية) لكي لا يعلق البوت للأبد
-            cmd = ["yt-dlp", "--print", "%(title)s\n%(description)s", url]
+            # إضافة User-Agent وهمي لهاتف محمول لخداع فلتر فيسبوك
+            cmd = [
+                "yt-dlp",
+                "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+                "--print", "%(title)s\n%(description)s",
+                url
+            ]
             result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=20)
             video_content = result.stdout.strip()
             
             if not video_content:
-                await status_msg.edit_text("❌ تعذر استخراج المحتوى النصي من هذا الرابط.")
+                await status_msg.edit_text("❌ تعذر استخراج المحتوى. قد يكون الفيديو خاصاً (Private) أو محظوراً.")
                 return
 
             prompt = f"أنت خبير علمي وأكاديمي. قم بتحليل محتوى الفيديو التالي المستخرج من فيسبوك ووضح بدقة إن كان دقيقاً علمياً أم لا باختصار:\n\n{video_content}"
@@ -42,7 +47,11 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status_msg.edit_text(f"🔬 **التقييم العلمي من جيميني:**\n\n{response.text}")
             
         except subprocess.TimeoutExpired:
-            await status_msg.edit_text("❌ تنبيه: استغرق الاتصال بفيسبوك وقتاً طويلاً.\nالسبب غالباً أن فيسبوك يحظر خوادم السحاب المجانية (Render). جرب رابطاً آخر لفيديو عام.")
+            await status_msg.edit_text(
+                "❌ **عذراً، فيسبوك يحظر خوادم المنصات المجانية (Render).**\n\n"
+                "💡 **الحل البديل السريع والفعال:**\n"
+                "بدلاً من إرسال رابط الفيديو، قم بنسخ **نص المنشور أو الوصف** من فيسبوك وأرسله مباشرة للبوت، وسيقوم بتحليله علمياً لك فوراً وبدون أي مشاكل!"
+            )
         except Exception as e:
             await status_msg.edit_text(f"❌ حدث خطأ أثناء المعالجة: {str(e)}")
     else:
